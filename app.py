@@ -48,8 +48,8 @@ def track(event: str, **props):
 
 # ── LangChain imports ─────────────────────────────────────────────────────────
 from langchain_community.document_loaders import PyPDFLoader
-from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_core.vectorstores import InMemoryVectorStore
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnablePassthrough
@@ -85,7 +85,7 @@ def build_chain(pdf_bytes: bytes, filename: str):
     ).split_documents(pages)
 
     embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-    vectorstore = Chroma.from_documents(chunks, embeddings, persist_directory=None)
+    vectorstore = InMemoryVectorStore.from_documents(chunks, embeddings)
     retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
 
     llm = ChatAnthropic(model="claude-haiku-4-5", temperature=0)
