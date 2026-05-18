@@ -1,0 +1,5 @@
+.env
+.env.example
+*.pdf
+__pycache__/
+.chroma/

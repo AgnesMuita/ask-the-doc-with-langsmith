@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: ask-the-doc
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: LANGCHAIN_API_KEY
+        sync: false
+      - key: LANGCHAIN_PROJECT
+        value: ask-the-doc
+      - key: POSTHOG_API_KEY
+        sync: false

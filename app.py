@@ -1,14 +1,48 @@
 import os
 import tempfile
-from pathlib import Path
 import random
+import uuid
+import time
 
 import streamlit as st
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+    load_dotenv(".env")
+    load_dotenv(".env.example")
+except ImportError:
+    pass
 
-load_dotenv(".env")
-load_dotenv(".env.example")
+# Streamlit Cloud secrets → env vars (no-op locally if secrets.toml absent)
+try:
+    for key in ("ANTHROPIC_API_KEY", "LANGCHAIN_API_KEY", "POSTHOG_API_KEY"):
+        if key in st.secrets:
+            os.environ[key] = st.secrets[key]
+except Exception:
+    pass
 
+# ── LangSmith: enable tracing when key is present ────────────────────────────
+if os.environ.get("LANGCHAIN_API_KEY"):
+    os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
+    os.environ.setdefault("LANGCHAIN_PROJECT", "ask-the-doc")
+
+# ── PostHog ───────────────────────────────────────────────────────────────────
+import posthog as _ph
+
+_posthog_key = os.environ.get("POSTHOG_API_KEY", "")
+if _posthog_key:
+    _ph.project_api_key = _posthog_key
+    _ph.host = "https://us.i.posthog.com"
+else:
+    _ph.disabled = True
+
+
+def track(event: str, **props):
+    if not _posthog_key:
+        return
+    _ph.capture(st.session_state["session_id"], event, properties=props)
+
+
+# ── LangChain imports ─────────────────────────────────────────────────────────
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings import HuggingFaceEmbeddings
@@ -64,8 +98,14 @@ def build_chain(pdf_bytes: bytes, filename: str):
     return chain, retriever
 
 
-# ── Page config ──────────────────────────────────────────────────────────────
+# ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Agent AG", page_icon="📄", layout="centered")
+
+# Stable session ID for PostHog (one per browser session)
+if "session_id" not in st.session_state:
+    st.session_state["session_id"] = str(uuid.uuid4())
+    track("page_view")
+
 st.title("Agent AG")
 st.caption("Upload a PDF and ask questions about its content — powered by Claude + RAG")
 
@@ -81,14 +121,22 @@ with st.sidebar:
         st.success(f"{uploaded.name} loaded")
         st.caption(f"{uploaded.size // 1024} KB")
 
+        if uploaded.name != st.session_state.get("last_uploaded"):
+            st.session_state["last_uploaded"] = uploaded.name
+            track("pdf_uploaded", filename=uploaded.name, size_kb=uploaded.size // 1024)
+
 # ── Main area ─────────────────────────────────────────────────────────────────
 if not uploaded:
     st.info("Upload a PDF in the sidebar to get started.")
     st.stop()
 
-chain, retriever = build_chain(uploaded.read(), uploaded.name)
+# Read bytes once; cache in session state so rerenders don't get empty bytes
+if st.session_state.get("pdf_name") != uploaded.name:
+    st.session_state["pdf_bytes"] = uploaded.read()
+    st.session_state["pdf_name"] = uploaded.name
 
-# Chat history
+chain, retriever = build_chain(st.session_state["pdf_bytes"], uploaded.name)
+
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
@@ -105,12 +153,24 @@ if question := st.chat_input("Ask a question about your PDF…"):
 
     with st.chat_message("assistant"):
         with st.spinner(random.choice(mission_messages)):
+            t0 = time.time()
             answer = chain.invoke(question)
             docs = retriever.invoke(question)
+            latency_ms = int((time.time() - t0) * 1000)
             pages = sorted({doc.metadata.get("page", "?") for doc in docs})
 
         st.markdown(answer)
         st.caption(f"Sources: pages {pages}")
+
+    track(
+        "question_asked",
+        question=question,
+        source_pages=pages,
+        num_sources=len(docs),
+        latency_ms=latency_ms,
+        pdf=uploaded.name,
+        turn=len(st.session_state.messages) // 2,
+    )
 
     st.session_state.messages.append({
         "role": "assistant",
