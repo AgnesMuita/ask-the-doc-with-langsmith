@@ -26,18 +26,22 @@ if os.environ.get("LANGCHAIN_API_KEY"):
     os.environ.setdefault("LANGCHAIN_PROJECT", "ask-the-doc")
 
 # ── PostHog ───────────────────────────────────────────────────────────────────
-import posthog as _ph
-
-_posthog_key = os.environ.get("POSTHOG_API_KEY", "")
-if _posthog_key:
-    _ph.project_api_key = _posthog_key
-    _ph.host = "https://us.i.posthog.com"
-else:
-    _ph.disabled = True
+try:
+    import posthog as _ph
+    _posthog_key = os.environ.get("POSTHOG_API_KEY", "")
+    if _posthog_key:
+        _ph.project_api_key = _posthog_key
+        _ph.host = "https://us.i.posthog.com"
+    else:
+        _ph.disabled = True
+    _posthog_ok = True
+except ImportError:
+    _posthog_key = ""
+    _posthog_ok = False
 
 
 def track(event: str, **props):
-    if not _posthog_key:
+    if not _posthog_ok or not _posthog_key:
         return
     _ph.capture(st.session_state["session_id"], event, properties=props)
 
